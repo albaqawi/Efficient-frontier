@@ -1,8 +1,11 @@
-#
-# Author: Ahmed Albaqawi
-# This code is my first AI generated code to evaluate building a code that can run on dynamic environments
-# like Streamlit Community Cloud or Replit or Deta or AWS
-#
+## These changes are completed to add the following
+## 1. Interactive Capital Allocation Line (CAL)
+## 2. International Market Tickers. 
+## Users can enter international tickers in the format used by Yahoo Finance 
+## (e.g., 2330.TW for TSMC on the Taiwan Stock Exchange or 1050.SR for Saudi Arabian companies in TASI).
+## All FINA data is fetched using Yahoo! Finance library - yfinance
+##
+##
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -25,24 +28,35 @@ if 'tickers' not in st.session_state:
         st.session_state.tickers = []
 
 # Function to calculate portfolio performance metrics
-def portfolio_performance(weights, mean_returns, cov_matrix):
+def portfolio_performance(weights, mean_returns, cov_matrix, risk_free_rate=0.01):
     returns = np.sum(mean_returns * weights) * 252  # 252 trading days per year
     std_dev = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * np.sqrt(252)
-    return std_dev, returns
+    sharpe_ratio = (returns - risk_free_rate) / std_dev
+    return std_dev, returns, sharpe_ratio
 
-# Function to calculate Efficient Frontier
-def efficient_frontier(mean_returns, cov_matrix, num_portfolios=10000):
-    results = np.zeros((3, num_portfolios))
+# Function to calculate Efficient Frontier and Capital Allocation Line
+def efficient_frontier(mean_returns, cov_matrix, risk_free_rate=0.01, num_portfolios=10000):
+    results = np.zeros((4, num_portfolios))
     weights_record = []
     for i in range(num_portfolios):
         weights = np.random.random(len(mean_returns))
         weights /= np.sum(weights)
-        std_dev, returns = portfolio_performance(weights, mean_returns, cov_matrix)
+        std_dev, returns, sharpe_ratio = portfolio_performance(weights, mean_returns, cov_matrix, risk_free_rate)
         results[0,i] = std_dev
         results[1,i] = returns
-        results[2,i] = (returns - 0.01) / std_dev  # Assuming risk-free rate of 1%
+        results[2,i] = sharpe_ratio
+        results[3,i] = np.argmax(results[2])  # max Sharpe ratio index
         weights_record.append(weights)
-    return results, weights_record
+    
+    # Find max Sharpe Ratio portfolio and calculate CAL
+    max_sharpe_idx = np.argmax(results[2])
+    max_sharpe_weights = weights_record[max_sharpe_idx]
+    max_sharpe_std_dev, max_sharpe_return, _ = portfolio_performance(max_sharpe_weights, mean_returns, cov_matrix, risk_free_rate)
+    cal_x = np.linspace(0, 2 * max_sharpe_std_dev, 100)
+    cal_y = risk_free_rate + (max_sharpe_return - risk_free_rate) / max_sharpe_std_dev * cal_x
+    cal_hover_text = [f"Allocation: {dict(zip(st.session_state.tickers, max_sharpe_weights.round(2)))}" for _ in cal_x]
+    
+    return results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text
 
 # Update persistent memory function
 def update_ticker_file():
@@ -50,15 +64,15 @@ def update_ticker_file():
         json.dump(st.session_state.tickers, f)
 
 # Streamlit Interface
-st.title("Efficient Frontier Visualizer with Persistent Memory")
-st.write("Select securities for the portfolio, add or remove tickers, and visualize the Efficient Frontier dynamically.")
+st.title("Global Efficient Frontier Visualizer with CAL and International Market Support")
+st.write("Select securities from any market, add/remove tickers, and visualize the Efficient Frontier with the CAL.")
 
 # Display current securities and options to add/remove
 st.write("### Current securities in portfolio:")
 st.write(st.session_state.tickers)
 
 # Add ticker
-ticker_to_add = st.text_input("Enter a stock ticker to add:", "")
+ticker_to_add = st.text_input("Enter a stock ticker to add (e.g., 2330.TW for TSMC, 1050.SR for TASI stock):", "")
 if st.button("Add Ticker") and ticker_to_add:
     ticker_to_add = ticker_to_add.upper()
     if ticker_to_add not in st.session_state.tickers:
@@ -82,14 +96,14 @@ if st.session_state.tickers:
     end_date = st.date_input("End Date", value=pd.to_datetime("2023-01-01"))
     
     if st.button("Calculate Efficient Frontier"):
-        # Fetch data from Yahoo Finance
+        # Fetch data from Yahoo Finance (support for international markets)
         data = yf.download(st.session_state.tickers, start=start_date, end=end_date)['Adj Close']
         daily_returns = data.pct_change()
         mean_returns = daily_returns.mean()
         cov_matrix = daily_returns.cov()
         
-        # Efficient Frontier Calculation
-        results, weights_record = efficient_frontier(mean_returns, cov_matrix)
+        # Calculate Efficient Frontier and CAL
+        results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text = efficient_frontier(mean_returns, cov_matrix)
         
         # Maximum Sharpe Ratio and Minimum Volatility Portfolios
         max_sharpe_idx = np.argmax(results[2])
@@ -135,9 +149,22 @@ if st.session_state.tickers:
             )
         )
 
+        # Add CAL
+        fig.add_trace(
+            go.Scatter(
+                x=cal_x,
+                y=cal_y,
+                mode='lines',
+                line=dict(color='orange', width=2, dash='dash'),
+                name="Capital Allocation Line (CAL)",
+                text=cal_hover_text,
+                hoverinfo='text'
+            )
+        )
+
         # Layout settings
         fig.update_layout(
-            title="Efficient Frontier",
+            title="Efficient Frontier with Capital Allocation Line",
             xaxis_title="Volatility",
             yaxis_title="Return",
             legend=dict(x=0.8, y=1.2)
@@ -150,6 +177,7 @@ if st.session_state.tickers:
         st.write("### Max Sharpe Ratio Portfolio")
         st.write("Annualized Return:", max_sharpe_ratio[1])
         st.write("Annualized Volatility:", max_sharpe_ratio[0])
+        st.write("Capital Allocation:", dict(zip(st.session_state.tickers, max_sharpe_weights.round(2))))
         
         st.write("### Min Volatility Portfolio")
         st.write("Annualized Return:", min_vol_ratio[1])
