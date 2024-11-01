@@ -1,3 +1,9 @@
+## This is the fix for:
+## 1. Missing data handling dates that lead to NAN for holidays or mix match in trading days
+## for international markets.
+## 2. Also Error Checks for data retreivals 
+###############################################################
+###############################################################
 ## These changes are completed to add the following
 ## 1. Interactive Capital Allocation Line (CAL)
 ## 2. International Market Tickers. 
@@ -45,7 +51,6 @@ def efficient_frontier(mean_returns, cov_matrix, risk_free_rate=0.01, num_portfo
         results[0,i] = std_dev
         results[1,i] = returns
         results[2,i] = sharpe_ratio
-        results[3,i] = np.argmax(results[2])  # max Sharpe ratio index
         weights_record.append(weights)
     
     # Find max Sharpe Ratio portfolio and calculate CAL
@@ -98,87 +103,97 @@ if st.session_state.tickers:
     if st.button("Calculate Efficient Frontier"):
         # Fetch data from Yahoo Finance (support for international markets)
         data = yf.download(st.session_state.tickers, start=start_date, end=end_date)['Adj Close']
-        daily_returns = data.pct_change()
-        mean_returns = daily_returns.mean()
-        cov_matrix = daily_returns.cov()
         
-        # Calculate Efficient Frontier and CAL
-        results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text = efficient_frontier(mean_returns, cov_matrix)
+        # Check for missing data
+        if data.isnull().values.any():
+            st.warning("Some data is missing for the selected tickers. Filling missing values forward.")
+            data = data.fillna(method='ffill').dropna()  # Fill missing data and remove remaining NA rows
         
-        # Maximum Sharpe Ratio and Minimum Volatility Portfolios
-        max_sharpe_idx = np.argmax(results[2])
-        max_sharpe_ratio = results[:, max_sharpe_idx]
-        min_vol_idx = np.argmin(results[0])
-        min_vol_ratio = results[:, min_vol_idx]
-        
-        # Create Plotly scatter plot for Efficient Frontier
-        fig = go.Figure()
+        # Ensure we have sufficient data
+        if data.empty or len(data.columns) < len(st.session_state.tickers):
+            st.error("Data could not be retrieved for some tickers. Please check the ticker symbols and try again.")
+        else:
+            daily_returns = data.pct_change()
+            mean_returns = daily_returns.mean()
+            cov_matrix = daily_returns.cov()
+            
+            # Calculate Efficient Frontier and CAL
+            results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text = efficient_frontier(mean_returns, cov_matrix)
+            
+            # Maximum Sharpe Ratio and Minimum Volatility Portfolios
+            max_sharpe_idx = np.argmax(results[2])
+            max_sharpe_ratio = results[:, max_sharpe_idx]
+            min_vol_idx = np.argmin(results[0])
+            min_vol_ratio = results[:, min_vol_idx]
+            
+            # Create Plotly scatter plot for Efficient Frontier
+            fig = go.Figure()
 
-        # Add all portfolio points
-        fig.add_trace(
-            go.Scatter(
-                x=results[0,:],
-                y=results[1,:],
-                mode='markers',
-                marker=dict(color=results[2,:], colorscale='Viridis', colorbar=dict(title='Sharpe Ratio')),
-                text=[f"Return: {r:.2f}, Volatility: {v:.2f}, Sharpe Ratio: {s:.2f}" for r, v, s in zip(results[1,:], results[0,:], results[2,:])],
-                hoverinfo='text',
-                name="Portfolio Points"
+            # Add all portfolio points
+            fig.add_trace(
+                go.Scatter(
+                    x=results[0,:],
+                    y=results[1,:],
+                    mode='markers',
+                    marker=dict(color=results[2,:], colorscale='Viridis', colorbar=dict(title='Sharpe Ratio')),
+                    text=[f"Return: {r:.2f}, Volatility: {v:.2f}, Sharpe Ratio: {s:.2f}" for r, v, s in zip(results[1,:], results[0,:], results[2,:])],
+                    hoverinfo='text',
+                    name="Portfolio Points"
+                )
             )
-        )
 
-        # Highlight Max Sharpe Ratio and Min Volatility portfolios
-        fig.add_trace(
-            go.Scatter(
-                x=[max_sharpe_ratio[0]],
-                y=[max_sharpe_ratio[1]],
-                mode='markers',
-                marker=dict(color='red', size=12, symbol='star'),
-                name='Max Sharpe Ratio',
-                hovertext=f"Return: {max_sharpe_ratio[1]:.2f}, Volatility: {max_sharpe_ratio[0]:.2f}"
+            # Highlight Max Sharpe Ratio and Min Volatility portfolios
+            fig.add_trace(
+                go.Scatter(
+                    x=[max_sharpe_ratio[0]],
+                    y=[max_sharpe_ratio[1]],
+                    mode='markers',
+                    marker=dict(color='red', size=12, symbol='star'),
+                    name='Max Sharpe Ratio',
+                    hovertext=f"Return: {max_sharpe_ratio[1]:.2f}, Volatility: {max_sharpe_ratio[0]:.2f}"
+                )
             )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=[min_vol_ratio[0]],
-                y=[min_vol_ratio[1]],
-                mode='markers',
-                marker=dict(color='blue', size=12, symbol='star'),
-                name='Min Volatility',
-                hovertext=f"Return: {min_vol_ratio[1]:.2f}, Volatility: {min_vol_ratio[0]:.2f}"
+            fig.add_trace(
+                go.Scatter(
+                    x=[min_vol_ratio[0]],
+                    y=[min_vol_ratio[1]],
+                    mode='markers',
+                    marker=dict(color='blue', size=12, symbol='star'),
+                    name='Min Volatility',
+                    hovertext=f"Return: {min_vol_ratio[1]:.2f}, Volatility: {min_vol_ratio[0]:.2f}"
+                )
             )
-        )
 
-        # Add CAL
-        fig.add_trace(
-            go.Scatter(
-                x=cal_x,
-                y=cal_y,
-                mode='lines',
-                line=dict(color='orange', width=2, dash='dash'),
-                name="Capital Allocation Line (CAL)",
-                text=cal_hover_text,
-                hoverinfo='text'
+            # Add CAL
+            fig.add_trace(
+                go.Scatter(
+                    x=cal_x,
+                    y=cal_y,
+                    mode='lines',
+                    line=dict(color='orange', width=2, dash='dash'),
+                    name="Capital Allocation Line (CAL)",
+                    text=cal_hover_text,
+                    hoverinfo='text'
+                )
             )
-        )
 
-        # Layout settings
-        fig.update_layout(
-            title="Efficient Frontier with Capital Allocation Line",
-            xaxis_title="Volatility",
-            yaxis_title="Return",
-            legend=dict(x=0.8, y=1.2)
-        )
+            # Layout settings
+            fig.update_layout(
+                title="Efficient Frontier with Capital Allocation Line",
+                xaxis_title="Volatility",
+                yaxis_title="Return",
+                legend=dict(x=0.8, y=1.2)
+            )
 
-        # Display the Plotly chart in Streamlit
-        st.plotly_chart(fig)
+            # Display the Plotly chart in Streamlit
+            st.plotly_chart(fig)
 
-        # Display portfolio details
-        st.write("### Max Sharpe Ratio Portfolio")
-        st.write("Annualized Return:", max_sharpe_ratio[1])
-        st.write("Annualized Volatility:", max_sharpe_ratio[0])
-        st.write("Capital Allocation:", dict(zip(st.session_state.tickers, max_sharpe_weights.round(2))))
-        
-        st.write("### Min Volatility Portfolio")
-        st.write("Annualized Return:", min_vol_ratio[1])
-        st.write("Annualized Volatility:", min_vol_ratio[0])
+            # Display portfolio details
+            st.write("### Max Sharpe Ratio Portfolio")
+            st.write("Annualized Return:", max_sharpe_ratio[1])
+            st.write("Annualized Volatility:", max_sharpe_ratio[0])
+            st.write("Capital Allocation:", dict(zip(st.session_state.tickers, max_sharpe_weights.round(2))))
+            
+            st.write("### Min Volatility Portfolio")
+            st.write("Annualized Return:", min_vol_ratio[1])
+            st.write("Annualized Volatility:", min_vol_ratio[0])
