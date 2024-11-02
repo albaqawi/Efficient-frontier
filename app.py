@@ -1,3 +1,7 @@
+## this is to improve the experience by adding company name to both the 
+## Securities in allocation and the add remove drop down list of securities
+################################################################
+################################################################
 ## This is the fix for:
 ## 1. Missing data handling dates that lead to NAN for holidays or mix match in trading days
 ## for international markets.
@@ -33,6 +37,20 @@ if 'tickers' not in st.session_state:
     else:
         st.session_state.tickers = []
 
+# Helper function to get ticker information
+def get_ticker_info(ticker):
+    try:
+        ticker_obj = yf.Ticker(ticker)
+        company_name = ticker_obj.info['longName']
+    except Exception:
+        company_name = "Unknown Company"
+    return f"{ticker} - {company_name}"
+
+# Helper function to update persistent memory
+def update_ticker_file():
+    with open(TICKER_FILE, 'w') as f:
+        json.dump(st.session_state.tickers, f)
+
 # Function to calculate portfolio performance metrics
 def portfolio_performance(weights, mean_returns, cov_matrix, risk_free_rate=0.01):
     returns = np.sum(mean_returns * weights) * 252  # 252 trading days per year
@@ -63,34 +81,35 @@ def efficient_frontier(mean_returns, cov_matrix, risk_free_rate=0.01, num_portfo
     
     return results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text
 
-# Update persistent memory function
-def update_ticker_file():
-    with open(TICKER_FILE, 'w') as f:
-        json.dump(st.session_state.tickers, f)
-
 # Streamlit Interface
 st.title("Global Efficient Frontier Visualizer with CAL and International Market Support")
 st.write("Select securities from any market, add/remove tickers, and visualize the Efficient Frontier with the CAL.")
 
-# Display current securities and options to add/remove
+# Display current securities with names and symbols
 st.write("### Current securities in portfolio:")
-st.write(st.session_state.tickers)
+st.write([get_ticker_info(ticker) for ticker in st.session_state.tickers])
 
-# Add ticker
+# Add ticker with company name
 ticker_to_add = st.text_input("Enter a stock ticker to add (e.g., 2330.TW for TSMC, 1050.SR for TASI stock):", "")
 if st.button("Add Ticker") and ticker_to_add:
     ticker_to_add = ticker_to_add.upper()
     if ticker_to_add not in st.session_state.tickers:
         st.session_state.tickers.append(ticker_to_add)
-        st.success(f"{ticker_to_add} added to the portfolio.")
+        st.success(f"{get_ticker_info(ticker_to_add)} added to the portfolio.")
         update_ticker_file()
     else:
-        st.warning(f"{ticker_to_add} is already in the portfolio.")
+        st.warning(f"{get_ticker_info(ticker_to_add)} is already in the portfolio.")
 
-# Remove ticker
-ticker_to_remove = st.selectbox("Select a ticker to remove", st.session_state.tickers)
+# Remove ticker with dropdown showing company names
+ticker_to_remove = st.selectbox(
+    "Select a ticker to remove",
+    options=[get_ticker_info(ticker) for ticker in st.session_state.tickers]
+)
+
 if st.button("Remove Selected Ticker") and ticker_to_remove:
-    st.session_state.tickers.remove(ticker_to_remove)
+    # Extract the ticker symbol from the formatted string
+    ticker_symbol = ticker_to_remove.split(" - ")[0]
+    st.session_state.tickers.remove(ticker_symbol)
     st.success(f"{ticker_to_remove} removed from the portfolio.")
     update_ticker_file()
 
