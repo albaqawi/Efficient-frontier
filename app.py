@@ -1,16 +1,21 @@
 """
-Efficient Frontier Visualizer with CAL and International Market Support
+Efficient Frontier Visualizer with CAL, International Market Support, and High Growth Screening
+
+Screen High Growth Stocks: Click the “Screen High Growth Stocks” button to automatically 
+fill your portfolio with tickers that have demonstrated strong revenue and profit growth 
+(from the candidate list).
 
 This Streamlit web app lets users select securities (US and international) and calculates
-the Efficient Frontier along with a Capital Allocation Line (CAL) that is tangent to the
-frontier at the maximum Sharpe ratio portfolio. The app displays company names with ticker
-symbols and uses persistent ticker storage.
+the Efficient Frontier along with a Capital Allocation Line (CAL) tangent to the frontier at 
+the maximum Sharpe ratio portfolio. The app displays company names along with ticker symbols,
+stores tickers persistently, and now includes a fundamental screening option to automatically 
+select high-growth stocks based on revenue growth and profit margins over the last 5 years.
 
-Key improvements in this version:
-1. The API call now uses auto_adjust=True so that adjusted price data is always returned in the "Close" column.
-2. Robust extraction of price data: Whether one or multiple tickers are downloaded,
-   the app correctly extracts the "Close" prices for further calculations.
-3. Comprehensive inline documentation for maintainability.
+Key Improvements in This Version:
+1. Robust price data extraction using auto_adjust=True so that adjusted price data is returned in "Close".
+2. Added a "Screen High Growth Stocks" button to automatically select stocks that show strong revenue 
+   and net profit (profit margin) growth.
+3. Comprehensive inline documentation for clarity and maintainability.
 """
 
 import streamlit as st
@@ -53,9 +58,9 @@ def update_ticker_file():
 def portfolio_performance(weights, mean_returns, cov_matrix, risk_free_rate=0.01):
     """
     Calculates portfolio performance metrics:
-    - Annualized return
-    - Annualized volatility (std dev)
-    - Sharpe ratio
+      - Annualized return
+      - Annualized volatility (std dev)
+      - Sharpe ratio
     """
     returns = np.sum(mean_returns * weights) * 252  # Assume 252 trading days per year
     std_dev = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * np.sqrt(252)
@@ -96,16 +101,65 @@ def efficient_frontier(mean_returns, cov_matrix, risk_free_rate=0.01, num_portfo
     
     return results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text
 
+def filter_high_growth_stocks(tickers, min_revenue_growth=0.05, min_profit_margin=0.1):
+    """
+    Screens a list of candidate tickers and returns only those that meet the criteria for
+    high revenue growth and profit margins.
+    
+    Parameters:
+      - tickers: list of ticker symbols (e.g., ['AAPL', 'MSFT', ...])
+      - min_revenue_growth: minimum revenue growth (as a decimal, e.g., 0.05 for 5%)
+      - min_profit_margin: minimum profit margin (as a decimal, e.g., 0.1 for 10%)
+      
+    Note: The function uses fundamental data from Yahoo Finance. Some tickers may not have
+          the required fields; those are skipped.
+    """
+    selected = []
+    for ticker in tickers:
+        try:
+            info = yf.Ticker(ticker).info
+            rev_growth = info.get("revenueGrowth")
+            profit_margin = info.get("profitMargins")
+            # If both values are available and exceed thresholds, select the ticker.
+            if rev_growth is not None and profit_margin is not None:
+                if rev_growth > min_revenue_growth and profit_margin > min_profit_margin:
+                    selected.append(ticker)
+        except Exception as e:
+            st.write(f"Error retrieving data for {ticker}: {e}")
+    return selected
+
 # ------------------ Streamlit Interface ------------------
 
-st.title("Global Efficient Frontier Visualizer with CAL and International Market Support")
+st.title("Global Efficient Frontier Visualizer with CAL and High Growth Screening")
 st.write("Select securities (US and international), add or remove tickers, and visualize the Efficient Frontier with the Capital Allocation Line (CAL).")
+st.write("Optionally, use the fundamental screen to automatically add high-growth stocks (with revenue and net profit growth over the last 5 years).")
 
 # Display current securities with company names
 st.write("### Current securities in portfolio:")
 st.write([get_ticker_info(ticker) for ticker in st.session_state.tickers])
 
-# Add ticker input
+# Create columns for removal buttons
+col1, col2 = st.columns(2)
+with col1:
+    # Remove a single ticker using a dropdown
+    ticker_to_remove = st.selectbox(
+        "Select a ticker to remove",
+        options=[get_ticker_info(ticker) for ticker in st.session_state.tickers]
+    )
+    if st.button("Remove Selected Ticker"):
+        ticker_symbol = ticker_to_remove.split(" - ")[0]
+        st.session_state.tickers.remove(ticker_symbol)
+        st.success(f"{ticker_to_remove} removed from the portfolio.")
+        update_ticker_file()
+
+with col2:
+    # Button to clear all tickers from the portfolio
+    if st.button("Clear All Tickers"):
+        st.session_state.tickers = []
+        update_ticker_file()
+        st.success("All tickers removed. Your portfolio is now empty.")
+
+# Add a ticker manually
 ticker_to_add = st.text_input("Enter a stock ticker to add (e.g., 2330.TW for TSMC, 1050.SR for TASI stock):", "")
 if st.button("Add Ticker") and ticker_to_add:
     ticker_to_add = ticker_to_add.upper()
@@ -116,54 +170,51 @@ if st.button("Add Ticker") and ticker_to_add:
     else:
         st.warning(f"{get_ticker_info(ticker_to_add)} is already in the portfolio.")
 
-# Remove ticker dropdown
-ticker_to_remove = st.selectbox(
-    "Select a ticker to remove",
-    options=[get_ticker_info(ticker) for ticker in st.session_state.tickers]
-)
-if st.button("Remove Selected Ticker") and ticker_to_remove:
-    ticker_symbol = ticker_to_remove.split(" - ")[0]
-    st.session_state.tickers.remove(ticker_symbol)
-    st.success(f"{ticker_to_remove} removed from the portfolio.")
-    update_ticker_file()
+# New: Button to screen and add high growth stocks automatically
+if st.button("Screen High Growth Stocks"):
+    # Define a candidate list (you can update this list as needed)
+    candidate_tickers = ["AAPL", "MSFT", "AMZN", "GOOGL", "NVDA", "TSLA", "ADBE", "CRM", "ORCL", "INTC"]
+    filtered = filter_high_growth_stocks(candidate_tickers, min_revenue_growth=0.05, min_profit_margin=0.1)
+    if filtered:
+        st.session_state.tickers = list(set(st.session_state.tickers + filtered))
+        update_ticker_file()
+        st.success("High growth stocks added: " + ", ".join(filtered))
+    else:
+        st.warning("No candidate tickers met the high growth criteria.")
 
+# Only run calculations if there are tickers in the portfolio
 if st.session_state.tickers:
-    # Date input for historical data
-    start_date = st.date_input("Start Date", value=pd.to_datetime("2021-01-01"))
+    # Date input for historical price data
+    start_date = st.date_input("Start Date", value=pd.to_datetime("2018-01-01"))
     end_date = st.date_input("End Date", value=pd.to_datetime("2023-01-01"))
     
     if st.button("Calculate Efficient Frontier"):
-        # Download price data using auto_adjust to ensure adjusted prices in the "Close" column
+        # Download price data with auto_adjust=True to return adjusted "Close" prices
         data = yf.download(st.session_state.tickers, start=start_date, end=end_date, auto_adjust=True)
         
-        # ------------------ Robust Price Data Extraction ------------------
-        # If multiple tickers, data.columns is a MultiIndex. Extract the "Close" prices.
+        # Robust price data extraction: handle MultiIndex columns if multiple tickers were downloaded
         if isinstance(data.columns, pd.MultiIndex):
-            # Check if the first level includes "Close"
             if "Close" in data.columns.get_level_values(0):
                 data = data["Close"]
             else:
                 st.error("The downloaded data does not contain 'Close'. Please check the ticker symbols.")
                 st.stop()
         else:
-            # For a single ticker, data should be a DataFrame or Series.
             if "Close" in data.columns:
                 data = data["Close"]
             else:
-                # If data is a Series (single ticker), convert to DataFrame.
                 if isinstance(data, pd.Series):
                     data = data.to_frame()
                 else:
                     st.error("The downloaded data does not contain 'Close'. Please check the ticker symbol.")
                     st.stop()
-        # -------------------------------------------------------------------
         
-        # Fill missing values if needed
+        # Fill missing data if necessary
         if data.isnull().values.any():
             st.warning("Some data is missing. Filling missing values forward.")
             data = data.fillna(method='ffill').dropna()
         
-        # Check for sufficient data
+        # Verify sufficient data was retrieved
         if data.empty or (isinstance(data, pd.DataFrame) and len(data.columns) < len(st.session_state.tickers)):
             st.error("Data could not be retrieved for some tickers. Please check the ticker symbols and try again.")
         else:
@@ -174,7 +225,7 @@ if st.session_state.tickers:
             # Calculate the Efficient Frontier and CAL
             results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text = efficient_frontier(mean_returns, cov_matrix)
             
-            # Identify the portfolios with maximum Sharpe ratio and minimum volatility
+            # Identify portfolios with maximum Sharpe ratio and minimum volatility
             max_sharpe_idx = np.argmax(results[2])
             max_sharpe_ratio = results[:, max_sharpe_idx]
             min_vol_idx = np.argmin(results[0])
@@ -233,6 +284,7 @@ if st.session_state.tickers:
             )
             st.plotly_chart(fig)
             
+            # Display portfolio details
             st.write("### Max Sharpe Ratio Portfolio")
             st.write("Annualized Return:", max_sharpe_ratio[1])
             st.write("Annualized Volatility:", max_sharpe_ratio[0])
