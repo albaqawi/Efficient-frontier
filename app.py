@@ -1,17 +1,15 @@
 """
 Efficient Frontier Visualizer with CAL and International Market Support
 
-This Streamlit web app lets users select securities (from US or international markets)
-and then calculates and visualizes the Efficient Frontier along with a Capital Allocation
-Line (CAL) that is tangent to the frontier at the maximum Sharpe ratio portfolio.
-It also displays the company name along with the ticker symbol.
+This Streamlit web app lets users select securities (US and international) and calculates
+the Efficient Frontier along with a Capital Allocation Line (CAL) that is tangent to the
+frontier at the maximum Sharpe ratio portfolio. The app now displays company names along
+with ticker symbols and includes robust error handling.
 
 Key improvements in this version:
-1. Fix for KeyError: 'Adj Close' – when multiple tickers are downloaded,
-   the resulting DataFrame may have a MultiIndex. The code now checks for this
-   and extracts the adjusted close prices accordingly.
-2. Excellent inline documentation and comments for maintainability.
-3. Persistent ticker storage using a JSON file and improved user experience.
+1. Improved extraction of price data: If "Adj Close" is not available, the app will use "Close".
+2. Excellent inline documentation and comments.
+3. Persistent ticker storage using a JSON file.
 """
 
 import streamlit as st
@@ -54,9 +52,9 @@ def update_ticker_file():
 def portfolio_performance(weights, mean_returns, cov_matrix, risk_free_rate=0.01):
     """
     Calculates portfolio performance metrics.
-    Annualized return, volatility (std dev), and Sharpe ratio are returned.
+    Returns annualized volatility, return, and Sharpe ratio.
     """
-    returns = np.sum(mean_returns * weights) * 252  # Assume 252 trading days/year
+    returns = np.sum(mean_returns * weights) * 252  # 252 trading days/year
     std_dev = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * np.sqrt(252)
     sharpe_ratio = (returns - risk_free_rate) / std_dev
     return std_dev, returns, sharpe_ratio
@@ -77,7 +75,7 @@ def efficient_frontier(mean_returns, cov_matrix, risk_free_rate=0.01, num_portfo
         results[2, i] = sharpe_ratio
         weights_record.append(weights)
     
-    # Find the portfolio with maximum Sharpe ratio
+    # Identify the portfolio with the maximum Sharpe ratio
     max_sharpe_idx = np.argmax(results[2])
     max_sharpe_weights = weights_record[max_sharpe_idx]
     max_sharpe_std_dev, max_sharpe_return, _ = portfolio_performance(max_sharpe_weights, mean_returns, cov_matrix, risk_free_rate)
@@ -85,12 +83,13 @@ def efficient_frontier(mean_returns, cov_matrix, risk_free_rate=0.01, num_portfo
     # Calculate the Capital Allocation Line (CAL)
     cal_x = np.linspace(0, 2 * max_sharpe_std_dev, 100)
     cal_y = risk_free_rate + (max_sharpe_return - risk_free_rate) / max_sharpe_std_dev * cal_x
-    # Hover text showing capital allocation percentages
+    # Prepare hover text to display the capital allocation percentages
     cal_hover_text = [f"Allocation: {dict(zip(st.session_state.tickers, max_sharpe_weights.round(2)))}" for _ in cal_x]
     
     return results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text
 
-# Streamlit UI
+# ------------------ Streamlit Interface ------------------
+
 st.title("Global Efficient Frontier Visualizer with CAL and International Market Support")
 st.write("Select securities (US and international), add or remove tickers, and visualize the Efficient Frontier along with the Capital Allocation Line (CAL).")
 
@@ -115,14 +114,14 @@ ticker_to_remove = st.selectbox(
     options=[get_ticker_info(ticker) for ticker in st.session_state.tickers]
 )
 if st.button("Remove Selected Ticker") and ticker_to_remove:
-    # Extract ticker symbol from the formatted string "TICKER - Company Name"
+    # Extract the ticker symbol from the formatted string "TICKER - Company Name"
     ticker_symbol = ticker_to_remove.split(" - ")[0]
     st.session_state.tickers.remove(ticker_symbol)
     st.success(f"{ticker_to_remove} removed from the portfolio.")
     update_ticker_file()
 
 if st.session_state.tickers:
-    # Date input for the historical data range
+    # Date inputs for the historical data range
     start_date = st.date_input("Start Date", value=pd.to_datetime("2021-01-01"))
     end_date = st.date_input("End Date", value=pd.to_datetime("2023-01-01"))
     
@@ -130,32 +129,36 @@ if st.session_state.tickers:
         # Download data from Yahoo Finance for the selected tickers
         data = yf.download(st.session_state.tickers, start=start_date, end=end_date)
         
-        # ----- FIX: Handle multi-index columns from yfinance -----
-        # When multiple tickers are downloaded, the DataFrame may have MultiIndex columns.
-        # We check for this and extract the 'Adj Close' data.
+        # ----- FIX: Handle price data extraction for one or multiple tickers -----
+        # Sometimes, the downloaded DataFrame does not contain 'Adj Close'. 
+        # In that case, we try to use 'Close' as a fallback.
         if isinstance(data.columns, pd.MultiIndex):
-            # Check if 'Adj Close' is one of the levels
+            # For multiple tickers, check for 'Adj Close' in level 1; if missing, try 'Close'
             if 'Adj Close' in data.columns.get_level_values(1):
                 data = data.xs('Adj Close', axis=1, level=1)
+            elif 'Close' in data.columns.get_level_values(1):
+                data = data.xs('Close', axis=1, level=1)
             else:
-                st.error("The downloaded data does not contain 'Adj Close'. Please check the ticker symbols.")
+                st.error("The downloaded data does not contain 'Adj Close' or 'Close'. Please check the ticker symbols.")
                 st.stop()
         else:
-            # For a single ticker, data should have a standard index
-            try:
+            # For a single ticker, check if 'Adj Close' is present; if not, use 'Close'
+            if 'Adj Close' in data.columns:
                 data = data['Adj Close']
-            except KeyError:
-                st.error("The downloaded data does not contain 'Adj Close'. Please check the ticker symbol.")
+            elif 'Close' in data.columns:
+                data = data['Close']
+            else:
+                st.error("The downloaded data does not contain 'Adj Close' or 'Close'. Please check the ticker symbol.")
                 st.stop()
-        # ----------------------------------------------------------
+        # ------------------------------------------------------------------------
         
         # Fill missing values to align the data
         if data.isnull().values.any():
             st.warning("Some data is missing for the selected tickers. Filling missing values forward.")
             data = data.fillna(method='ffill').dropna()
         
-        # Ensure sufficient data is available
-        if data.empty or len(data.columns) < len(st.session_state.tickers):
+        # Verify that sufficient data is available
+        if data.empty or (isinstance(data, pd.DataFrame) and len(data.columns) < len(st.session_state.tickers)):
             st.error("Data could not be retrieved for some tickers. Please check the ticker symbols and try again.")
         else:
             daily_returns = data.pct_change()
@@ -165,13 +168,13 @@ if st.session_state.tickers:
             # Calculate the Efficient Frontier and CAL
             results, weights_record, max_sharpe_weights, cal_x, cal_y, cal_hover_text = efficient_frontier(mean_returns, cov_matrix)
             
-            # Identify portfolios with max Sharpe and minimum volatility
+            # Identify portfolios with the maximum Sharpe ratio and minimum volatility
             max_sharpe_idx = np.argmax(results[2])
             max_sharpe_ratio = results[:, max_sharpe_idx]
             min_vol_idx = np.argmin(results[0])
             min_vol_ratio = results[:, min_vol_idx]
             
-            # Build an interactive Plotly figure
+            # Build the interactive Plotly figure
             fig = go.Figure()
             fig.add_trace(
                 go.Scatter(
@@ -196,7 +199,7 @@ if st.session_state.tickers:
                     hovertext=f"Return: {max_sharpe_ratio[1]:.2f}, Volatility: {max_sharpe_ratio[0]:.2f}"
                 )
             )
-            # Highlight the Min Volatility portfolio
+            # Highlight the Minimum Volatility portfolio
             fig.add_trace(
                 go.Scatter(
                     x=[min_vol_ratio[0]],
@@ -219,7 +222,6 @@ if st.session_state.tickers:
                     hoverinfo='text'
                 )
             )
-            # Update figure layout
             fig.update_layout(
                 title="Efficient Frontier with Capital Allocation Line",
                 xaxis_title="Volatility",
